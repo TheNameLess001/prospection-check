@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 
-# --- 1. FONCTION POUR NETTOYER LE TEXTE (Ignorer accents, majuscules...) ---
+# --- 1. FONCTION POUR NETTOYER LE TEXTE ---
 def nettoyer_texte(texte):
     if pd.isna(texte):
         return ""
-    # Convertir en chaîne de caractères, mettre en minuscules et enlever les espaces inutiles
+    # Convertir en minuscules et enlever les espaces inutiles
     texte = str(texte).lower().strip()
-    # Supprimer les accents
+    # Supprimer les accents (é devient e, etc.)
     texte = ''.join(c for c in unicodedata.normalize('NFD', texte) if unicodedata.category(c) != 'Mn')
     return texte
 
@@ -22,7 +22,8 @@ col1, col2 = st.columns(2)
 with col1:
     fichier_base = st.file_uploader("1. Base Principale (CSV point-virgule)", type=["csv"])
 with col2:
-    fichiers_sprints = st.file_uploader("2. Fichiers Sprint (CSV)", type=["csv"], accept_multiple_files=True)
+    # MODIFICATION : Accepte désormais les fichiers .xlsx
+    fichiers_sprints = st.file_uploader("2. Fichiers Sprint (Excel .xlsx)", type=["xlsx"], accept_multiple_files=True)
 
 # --- 4. BARRE DE RECHERCHE ---
 st.divider()
@@ -33,50 +34,54 @@ if recherche:
     recherche_propre = nettoyer_texte(recherche)
     trouve_quelque_part = False
     
-    # A. Recherche dans la base principale
+    # A. Recherche dans la base principale (CSV)
     if fichier_base is not None:
         try:
-            # On remet le curseur au début du fichier au cas où on recharge
             fichier_base.seek(0)
             df_base = pd.read_csv(fichier_base, sep=";")
-            
-            # On nettoie la colonne des noms pour la recherche
             df_base['Nom_Recherche'] = df_base['Restaurant Name'].apply(nettoyer_texte)
             
-            # On filtre pour voir si la recherche est contenue dans le nom
             resultats_base = df_base[df_base['Nom_Recherche'].str.contains(recherche_propre, na=False)]
             
             if not resultats_base.empty:
                 trouve_quelque_part = True
                 st.error(f"🚨 ATTENTION : {len(resultats_base)} résultat(s) trouvé(s) dans la BASE PRINCIPALE !")
-                # On n'affiche que les colonnes utiles
-                st.dataframe(resultats_base[['Restaurant Name', 'Main City', 'Status', 'phone']], use_container_width=True)
+                # On affiche les colonnes utiles
+                colonnes_base = [c for c in ['Restaurant Name', 'Main City', 'Status', 'phone'] if c in resultats_base.columns]
+                st.dataframe(resultats_base[colonnes_base], use_container_width=True)
         except Exception as e:
             st.error("Erreur de lecture de la base principale. Vérifiez que c'est bien un fichier CSV avec point-virgule (;).")
 
-    # B. Recherche dans les Sprints
+    # B. Recherche dans les Sprints (EXCEL)
     if fichiers_sprints:
         df_liste_sprints = []
         for f in fichiers_sprints:
             f.seek(0)
             try:
-                df = pd.read_csv(f, sep=",")
-                df['Fichier_Source'] = f.name.replace("Sales Sprint Avril-Mai (4).xlsx - ", "").replace(".csv", "")
+                # MODIFICATION : Lecture de fichier Excel
+                df = pd.read_excel(f)
+                df['Fichier_Source'] = f.name.replace(".xlsx", "")
                 df_liste_sprints.append(df)
-            except:
-                pass # Ignore les fichiers qui posent problème
+            except Exception as e:
+                st.error(f"Impossible de lire le fichier {f.name}.")
         
         if df_liste_sprints:
             df_tous_sprints = pd.concat(df_liste_sprints, ignore_index=True)
-            df_tous_sprints['Nom_Recherche'] = df_tous_sprints['Restaurant'].apply(nettoyer_texte)
             
-            resultats_sprints = df_tous_sprints[df_tous_sprints['Nom_Recherche'].str.contains(recherche_propre, na=False)]
-            
-            if not resultats_sprints.empty:
-                trouve_quelque_part = True
-                st.warning(f"⚠️ ATTENTION : {len(resultats_sprints)} résultat(s) trouvé(s) dans les SPRINTS EN COURS !")
-                st.dataframe(resultats_sprints[['Restaurant', 'Fichier_Source', 'STATUT', 'BINOME']], use_container_width=True)
+            # Vérification que la colonne "Restaurant" existe bien dans vos fichiers Excel
+            if 'Restaurant' in df_tous_sprints.columns:
+                df_tous_sprints['Nom_Recherche'] = df_tous_sprints['Restaurant'].apply(nettoyer_texte)
+                resultats_sprints = df_tous_sprints[df_tous_sprints['Nom_Recherche'].str.contains(recherche_propre, na=False)]
+                
+                if not resultats_sprints.empty:
+                    trouve_quelque_part = True
+                    st.warning(f"⚠️ ATTENTION : {len(resultats_sprints)} résultat(s) trouvé(s) dans les SPRINTS EN COURS !")
+                    # Affiche les colonnes présentes
+                    colonnes_sprint = [c for c in ['Restaurant', 'Fichier_Source', 'STATUT', 'BINOME', 'TELEPHONE'] if c in resultats_sprints.columns]
+                    st.dataframe(resultats_sprints[colonnes_sprint], use_container_width=True)
+            else:
+                st.error("La colonne 'Restaurant' n'a pas été trouvée dans un de vos fichiers Excel Sprint.")
 
     # C. Si rien n'est trouvé
     if not trouve_quelque_part and (fichier_base is not None or fichiers_sprints):
-        st.success("✅ Aucun restaurant correspondant trouvé. Vous pouvez l'ajouter pour le mois prochain !")
+        st.success("✅ Aucun restaurant correspondant trouvé. Vous pouvez l'intégrer pour le mois prochain !")
